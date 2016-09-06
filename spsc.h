@@ -1,4 +1,6 @@
 #include <atomic>
+#include <assert.h>
+#include <mutex>
 
 template<class T>
 class q_element {
@@ -25,10 +27,11 @@ class LFQueue {
   ~LFQueue();
   void push(const T& el);
   T pop(void);
-  int size(void) { return num_elements;}
+  int size(void) { return num_elements.load();}
  private:
-  int num_elements;
+  std::atomic<int> num_elements;
   q_element<T> *root;
+  std::mutex mtx;
 };
 
 template<class T>
@@ -39,6 +42,8 @@ LFQueue<T>::LFQueue()
   root->prev = root;
   num_elements = 0;
 }
+
+long elements_popped = 0;
 
 template<class T>
 LFQueue<T>::~LFQueue()
@@ -55,11 +60,10 @@ void LFQueue<T>::push(const T& el)
   node->next = root->next;
   node->prev = root;
 
+  mtx.lock();
   root->next->prev = node;
   root->next = node;
-
-  if (!num_elements)
-    root->prev = node;
+  mtx.unlock();
 
   num_elements++;
 }
@@ -67,17 +71,26 @@ void LFQueue<T>::push(const T& el)
 template<class T>
 T LFQueue<T>::pop(void)
 {
-  if (!num_elements)
-    return (T)NULL;
+  int elnum = num_elements.load();
+  assert(elnum != 0);
 
   q_element<T> *node = root->prev;
+  assert(node != root);
+
   T ret = node->data;
 
+  mtx.lock();
   root->prev = node->prev;
   root->prev->next = root;
+  mtx.unlock();
   
   delete node;
 
+  elements_popped++;
+  std::atomic_thread_fence(std::memory_order_seq_cst);
   num_elements--;
+
+  assert(root->next != NULL);
+  assert(root->prev != NULL);
   return ret;
 }
